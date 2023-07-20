@@ -1,9 +1,10 @@
 // {"src":"c1","dest":"n1","body":{"type":"init","msg_id":1,"node_id":"n3","node_ids":["n1","n2","n3"]}}
 
 #![allow(dead_code)]
-use std::io::{StdoutLock, Write};
-
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
+use std::io::{StdoutLock, Write};
+use unique_id::{random::RandomGenerator, Generator};
 
 #[derive(Debug, Deserialize, Serialize)]
 struct Message {
@@ -36,57 +37,101 @@ enum MessageType {
     EchoOk {
         echo: String,
     },
+    Generate {},
+    GenerateOk {
+        id: usize,
+    },
 }
 
-struct Node {}
+struct Node {
+    msg_id: usize,
+}
 
 impl Node {
-    fn generate_response(stdout: &mut StdoutLock, message: Message) {
+    fn generate_response(
+        &mut self,
+        stdout: &mut StdoutLock,
+        message: Message,
+    ) -> anyhow::Result<()> {
         match message.body.message_type {
             MessageType::Init { .. } => {
                 let response = Message {
                     src: message.dest,
                     dest: message.src,
                     body: Payload {
-                        msg_id: Some(1),
-                        in_reply_to: Some(1),
+                        msg_id: Some(self.msg_id),
+                        in_reply_to: message.body.msg_id,
                         message_type: MessageType::InitOk,
                     },
                 };
 
                 serde_json::to_writer(&mut *stdout, &response).unwrap();
-                stdout.write_all(b"\n").unwrap();
+                stdout
+                    .write_all(b"\n")
+                    .context("couldn't successfully write to stdout")?;
+                Ok(())
             }
             MessageType::Echo { echo } => {
                 let response = Message {
                     src: message.dest,
                     dest: message.src,
                     body: Payload {
-                        msg_id: Some(1),
-                        in_reply_to: Some(1),
+                        msg_id: Some(self.msg_id),
+                        in_reply_to: message.body.msg_id,
                         message_type: MessageType::EchoOk { echo },
                     },
                 };
 
                 serde_json::to_writer(&mut *stdout, &response).unwrap();
-                stdout.write_all(b"\n").unwrap();
+                stdout
+                    .write_all(b"\n")
+                    .context("couldn't successfully write to stdout")?;
+                self.msg_id += 1;
+                Ok(())
             }
             MessageType::InitOk { .. } => todo!(),
             MessageType::EchoOk { .. } => todo!(),
+            MessageType::Generate {} => {
+                let unique_id = RandomGenerator::default();
+                let response = Message {
+                    src: message.dest,
+                    dest: message.src,
+                    body: Payload {
+                        msg_id: Some(self.msg_id),
+                        in_reply_to: message.body.msg_id,
+                        message_type: MessageType::GenerateOk {
+                            id: unique_id.next_id() as usize, // not pretty but does the job
+                        },
+                    },
+                };
+
+                serde_json::to_writer(&mut *stdout, &response).unwrap();
+                stdout
+                    .write_all(b"\n")
+                    .context("couldn't successfully write to stdout")?;
+                self.msg_id += 1;
+                Ok(())
+            }
+            MessageType::GenerateOk { .. } => todo!(),
         }
     }
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let stdin = std::io::stdin().lock();
 
     let deserialized = serde_json::Deserializer::from_reader(stdin).into_iter::<Message>();
 
     let mut stdout = std::io::stdout().lock();
 
+    let mut node_at_start_up = Node { msg_id: 1 };
     for input in deserialized {
-        Node::generate_response(&mut stdout, input.unwrap());
+        node_at_start_up.generate_response(
+            &mut stdout,
+            input.context("something went wrong with the input")?,
+        )?;
     }
+    Ok(())
 }
 
 #[cfg(test)]

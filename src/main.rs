@@ -44,6 +44,7 @@ enum MessageType<'a> {
         id: usize,
     },
     Broadcast {
+        #[serde(rename = "message")]
         broadcast_message: usize,
     },
     BroadcastOk,
@@ -57,6 +58,7 @@ enum MessageType<'a> {
     Topology {
         topology: Value,
     },
+    TopologyOk {},
 }
 
 struct Node {
@@ -173,16 +175,24 @@ impl Node {
                 self.msg_id += 1;
                 Ok(())
             }
-            MessageType::ReadOk { .. } => {
-                bail!("broadcast_ok should not be received by a node")
-            }
+            MessageType::ReadOk { .. } => bail!("broadcast_ok should not be received by a node"),
             MessageType::Topology { .. } => {
-                serde_json::to_writer(&mut *stdout, &message).unwrap();
+                let response = Message {
+                    src: message.dest,
+                    dest: message.src,
+                    body: Payload {
+                        msg_id: Some(self.msg_id),
+                        in_reply_to: message.body.msg_id,
+                        message_type: MessageType::TopologyOk {},
+                    },
+                };
+                serde_json::to_writer(&mut *stdout, &response).unwrap();
                 stdout
                     .write_all(b"\n")
                     .context("couldn't successfully write to stdout")?;
                 Ok(())
             }
+            MessageType::TopologyOk {} => bail!("broadcast_ok should not be received by a node"),
         }
     }
 }
